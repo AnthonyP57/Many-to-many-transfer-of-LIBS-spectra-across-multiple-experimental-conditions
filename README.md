@@ -89,7 +89,7 @@ Load your .h5 file and metadata dictionaries.
 
 Detect all available conditions and load the corresponding CNN predictors.
 
-Dynamically generate permutations for every possible transfer direction (e.g., VACUUM 100 -> EARTH 50, EARTH 100 -> EARTH 50, etc.).
+Dynamically generate permutations for every possible transfer direction (e.g., VACUUM 100 $\rightarrow$ EARTH 50, EARTH 100 $\rightarrow$ EARTH 50, etc.).
 
 Evaluate clustering accuracy, cosine similarity, and RMSE metrics on-the-fly.
 
