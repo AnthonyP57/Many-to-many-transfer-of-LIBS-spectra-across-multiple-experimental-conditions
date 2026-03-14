@@ -28,7 +28,7 @@ torch = [
 ]
 
 [tool.setuptools]
-packages = ["libs_transfer", "libs_transfer.prepare_data"]
+packages = ["libs_transfer.prepare_data", "libs_transfer.training"]
 
 [build-system]
 requires = ["setuptools", "wheel"]

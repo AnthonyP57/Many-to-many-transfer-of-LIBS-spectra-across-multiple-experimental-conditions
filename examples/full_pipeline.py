@@ -13,4 +13,4 @@ data_to_h5('./examples/example_raw_data', './examples/processed_data')
 
 train_concentration_predictors(data_folder='./examples/processed_data')
 
-acvae = train_acvae_pipeline(test_split=0.1)
+acvae = train_acvae_pipeline(test_split=0.5)
