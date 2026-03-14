@@ -10,7 +10,7 @@ from torch.utils.data import  DataLoader
 import torch.nn.functional as F
 import pandas as pd
 import joblib
-from CNN_conc_baseline import CNN
+from libs_transfer.training.CNN_conc_baseline import CNN
 import json
 from tqdm import tqdm
 import warnings

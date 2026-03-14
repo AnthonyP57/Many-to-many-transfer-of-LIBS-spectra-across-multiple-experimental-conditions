@@ -1,4 +1,4 @@
-import pycaltransfer.caltransfer as caltransfer
+from PDS import piecewise_direct_standardization_pytorch
 import h5py
 import numpy as np
 from modules import SpectraDataset, ClassDataset, PDS_test_spectra, train_test_spectra_idx, train_test_spectra_samples, PDSDataset
@@ -7,10 +7,12 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import pandas as pd
 import joblib
 from torch.utils.data import  DataLoader
-from CNN_conc_baseline import CNN
+from libs_transfer.training.CNN_conc_baseline import CNN
 import json
 from tqdm import tqdm
 from sklearn.metrics import r2_score
+
+torch.set_float32_matmul_precision('high')
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
@@ -70,10 +72,10 @@ train_idx, test_idx = train_test_spectra_samples(conditions, labels) # divide wi
 batch_size=50
 segment_size=20
 
-# ds = SpectraDataset(all_spectra[train_idx], conditions[train_idx], labels[train_idx], total_emis[train_idx], batch_size=batch_size)
-# ds.random_select_samples(shuffle_data_pairs=True)
+ds = SpectraDataset(all_spectra[train_idx], conditions[train_idx], labels[train_idx], total_emis[train_idx], batch_size=batch_size)
+ds.random_select_samples(shuffle_data_pairs=True)
 
-ds = PDSDataset(all_spectra[train_idx], conditions[train_idx], labels[train_idx])
+# ds = PDSDataset(all_spectra[train_idx], conditions[train_idx], labels[train_idx])
 
 conc_df = pd.read_excel(r'/home/anthonyp57/VSCode_projects/Spectra_transfer/git_code/ACVAE/Regoliths/Concentrations.xlsx')
 conc_df = conc_df.dropna().transpose()
@@ -116,65 +118,62 @@ ys_10=[]
 preds_10_cnn=[]
 
 iterator = tqdm(ds, desc='PDS')
-# for x_0, x_1, y_0, y_1, e_0, e_1 in iterator:
-for x_0, x_1, y_0, y_1 in iterator:
 
-    x_0 = x_0.detach().numpy()
-    x_1 = x_1.detach().numpy()
+for x_0, x_1, y_0, y_1, e_0, e_1 in iterator:
+# for x_0, x_1, y_0, y_1 in iterator:
 
-    # if torch.argmax(y_0, axis=1)[0] == 0:
-    if y_0 == 0:
+    x_0 = x_0.to(device)
+    x_1 = x_1.to(device)
+
+    if torch.argmax(y_0, axis=1)[0] == 0:
+    # if y_0 == 0:
         _0 = 0
         x_0_valid = vacuum100_test
         valid_10 = model_v100
         std_10 = std_v100
         conc_10 = vacuum100_conc
-    # elif torch.argmax(y_0, axis=1)[0] == 1:
-    elif y_0 == 1:
+    elif torch.argmax(y_0, axis=1)[0] == 1:
+    # elif y_0 == 1:
         _0 = 1
         x_0_valid = earth50_test
         valid_10 = model_e50
         std_10 = std_e50
         conc_10 = earth50_conc
-    # elif torch.argmax(y_0, axis=1)[0] == 2:
-    elif y_0 == 2:
+    elif torch.argmax(y_0, axis=1)[0] == 2:
+    # elif y_0 == 2:
         _0 = 2
         x_0_valid = earth100_test
         valid_10 = model_e100
         std_10 = std_e100
         conc_10 = earth100_conc
 
-    # if torch.argmax(y_1, axis=1)[0] == 0:
-    if y_1 == 0:
+    if torch.argmax(y_1, axis=1)[0] == 0:
+    # if y_1 == 0:
         _1 = 0
         x_1_valid = vacuum100_test
         valid_01 = model_v100
         std_01 = std_v100
         conc_01 = vacuum100_conc
-    # elif torch.argmax(y_1, axis=1)[0] == 1:
-    elif y_1 == 1:
+    elif torch.argmax(y_1, axis=1)[0] == 1:
+    # elif y_1 == 1:
         _1 = 1
         x_1_valid = earth50_test
         valid_01 = model_e50
         std_01 = std_e50
         conc_01 = earth50_conc
-    # elif torch.argmax(y_1, axis=1)[0] == 2:
-    elif y_1 == 2:
+    elif torch.argmax(y_1, axis=1)[0] == 2:
+    # elif y_1 == 2:
         _1 = 2
         x_1_valid = earth100_test
         valid_01 = model_e100
         std_01 = std_e100
         conc_01 = earth100_conc
 
-    F, a = caltransfer.pds_pls_transfer_fit(x_1, x_0, max_ncp = 10, ww = 10)
-    x_01 = x_0_valid.dot(F) + a
-    del F,a
+    x_01 = piecewise_direct_standardization_pytorch(x_0, x_1, x_0_valid, segment_size)[0]
     x_01 = np.maximum(std.inverse_transform(x_01), 0) #relu
     x_01 = emis_std.transform(x_01 / np.sum(x_01, axis=1, keepdims=True))
 
-    F, a = caltransfer.pds_pls_transfer_fit(x_0, x_1, max_ncp = 10, ww = 10)
-    x_10 = x_1_valid.dot(F) + a
-    del F,a
+    x_10 = piecewise_direct_standardization_pytorch(x_1, x_0, x_1_valid, segment_size)[0]
     x_10 = np.maximum(std.inverse_transform(x_10), 0) #relu
     x_10 = emis_std.transform(x_10 / np.sum(x_10, axis=1, keepdims=True))
 
@@ -225,7 +224,6 @@ for x_0, x_1, y_0, y_1 in iterator:
     ys_10.append(np.concatenate(ys, axis=0))
     rmse_c_ = np.sqrt(np.mean((cnn_preds - np.concatenate(preds, axis=0)) ** 2, axis=0))
     preds_10_cnn.append(cnn_preds)
-
     # iterator.write(f'\n0 : {"v100" if _0 == 0 else "e50" if _0 == 1 else "e100"}\t\t1 : {"v100" if _1 == 0 else "e50" if _1 == 1 else "e100"}')
 
     iterator.set_postfix({'ave 0->1 RMSE': str(np.mean(rmse)),

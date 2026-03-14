@@ -1,20 +1,15 @@
-from models import Classifier, ACVAE, Encoder, Decoder
+from libs_transfer.training.models import Classifier, ACVAE, Encoder, Decoder
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-# import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# from data_visualization import xy_plot
 import h5py
-from modules import SpectraDataset, ClassDataset, ACVAE_test_spectra, train_test_spectra_samples
+from libs_transfer.training.modules import SpectraDataset, ClassDataset, ACVAE_test_spectra, train_test_spectra_samples
 from torch.utils.data import  DataLoader
-#from kmeans_loss import calc_kmeans_loss
-# import random
-from CNN_conc_baseline import CNN
-from PolyHyper import PolyHyper_search, Config
+from libs_transfer.training.CNN_conc_baseline import CNN
+from libs_transfer.hyperparam_search.PolyHyper import PolyHyper_search, Config
 import json
-# from spectra_normalization import to_onehot
 import joblib
 import pandas as pd
 import copy
@@ -33,17 +28,12 @@ with h5py.File('new_data\\spectra.h5', 'r') as hf:
     spectra_last_idx = np.where(wavelen == 850)[0][0] + 25
 
     labels = np.array(hf['labels_one_hot'])
-    all_spectra = np.array(hf['spectra'][:, spectra_0_idx:spectra_last_idx+1])[:, 0::3] #take every 3nd measurement
+    all_spectra = np.array(hf['spectra'][:, spectra_0_idx:spectra_last_idx+1])
 
     all_atm = np.array(hf['atm_one_hot'][()])
     all_ene = np.array(hf['energy_one_hot'][()])
 
     conditions = np.array([np.kron(row1, row2) for row1, row2 in zip(all_atm, all_ene)])
-    # c_ = np.where(np.argmax(conditions, axis=1) == 1)[0]
-    # c__ = np.where(np.argmax(conditions, axis=1) == 3)[0]
-    # c_ = np.concatenate([c_, c__])
-    # all_spectra = all_spectra[c_]
-    # conditions = conditions[c_][:,[1,3]]
 
     c = np.where(np.argmax(conditions, axis=1) != 0)[0] #no vacuum 50%
     all_spectra = all_spectra[c]
@@ -169,9 +159,9 @@ class Model:
         self.config = config
 
         encoder = Encoder(n_classes_channels=1, in_channels=1, ks_lst=config['kernel_and_pad'][0], out_channels_lst=config['channels'], stride_lst=[1, 1, 1, 1, 1, 1, 1],
-                          skip_pad=config['kernel_and_pad'][1])
+                            skip_pad=config['kernel_and_pad'][1])
         decoder = Decoder(n_classes_channels=1, in_channels=config['channels'][-1], ks_lst=config['kernel_and_pad'][0][::-1], out_channels_lst=config['channels'][::-1][1:] + [1],
-                          stride_lst=[1, 1, 1, 1, 1, 1, 1], skip_pad=config['kernel_and_pad'][1])
+                            stride_lst=[1, 1, 1, 1, 1, 1, 1], skip_pad=config['kernel_and_pad'][1])
 
         for p in encoder.parameters():
             if p.dim() > 1:
@@ -287,18 +277,7 @@ class Model:
 
         conc_loss = running_loss_ / n_all_
 
-        # mars_spectra_ = []
-        # for i in range(earth_labels_.shape[1]):
-        #     all_idx = np.where(earth_labels_[:, i] == 1)[0]
-        #     random_10 = random.sample(list(all_idx), 20)
-        #     mars_spectra_.append(all_spectra_np[random_10])
-        #
-        # tr_spectra = np.array(mars_spectra_).reshape(earth_labels_.shape[1] * 20, -1)
-        #
-        # kmeans_score, kmeans_loss = calc_kmeans_loss(tr_spectra)
-
-        total_loss = conc_loss# + kmeans_loss
-        # print(f'\tconcentration loss: {conc_loss:.3f}')# clustering: {kmeans_score:.3f}')
+        total_loss = conc_loss
 
         return total_loss
 

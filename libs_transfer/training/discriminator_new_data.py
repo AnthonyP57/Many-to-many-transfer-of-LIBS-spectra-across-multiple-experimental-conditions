@@ -3,7 +3,7 @@ import torch
 from modules import SpectraDataset, ClassDataset, train_test_spectra_idx, train_test_spectra_samples, ACVAE_test_spectra, ModelConfig, divide_into_sublists, create_random_combined_list
 import h5py
 import numpy as np
-from data_visualization import xy_plot
+from libs_transfer.prepare_data.data_visualization import xy_plot
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import time
 import torch.nn as nn
@@ -13,7 +13,7 @@ import os
 import datetime
 import pandas as pd
 import joblib
-from CNN_conc_baseline import CNN
+from libs_transfer.training.CNN_conc_baseline import CNN
 import json
 from tqdm import tqdm
 import warnings
