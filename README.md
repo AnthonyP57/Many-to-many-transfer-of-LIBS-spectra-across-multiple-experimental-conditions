@@ -1,6 +1,9 @@
 # Spectra Transfer ACVAE
 This repository is actively being refactored to make it as easy to use as possible. Here is everything you need to know to prepare your data, train the baseline predictors, and train the ACVAE model from scratch.
 
+> [!IMPORTANT]
+> Data used in the publication can be accessed [here](https://drive.google.com/drive/folders/1hzWN3hNHsi6lETYezgJcnDMf3yyKKAF9?usp=sharing)
+
 ## Quick Start: The Full Pipeline
 If your data directories are already set up, you can run the entire data extraction, CNN baseline training, and ACVAE evaluation pipeline in just a few lines of code.
 
