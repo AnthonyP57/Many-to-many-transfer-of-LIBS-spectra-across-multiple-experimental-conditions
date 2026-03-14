@@ -1,5 +1,5 @@
 import torch.nn as nn
-from spectra_normalization import calc_padding
+from libs_transfer.prepare_data.spectra_normalization import calc_padding
 import torch
 import math
 from torch.utils.data import Dataset

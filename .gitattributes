@@ -1,0 +1,2 @@
+examples/example_raw_data/** filter=lfs diff=lfs merge=lfs -text
+examples/processed_data/** filter=lfs diff=lfs merge=lfs -text

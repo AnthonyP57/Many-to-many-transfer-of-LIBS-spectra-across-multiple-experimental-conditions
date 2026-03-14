@@ -3,7 +3,7 @@ from modules import ConvBatchNormGLU1D, DeConvBatchNormGLU1D, concat_dim1, gauss
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from spectra_normalization import calc_padding, size_after_conv1d, size_after_avgpool1d, find_tensor_highest_peaks
+from libs_transfer.prepare_data.spectra_normalization import calc_padding, size_after_conv1d, size_after_avgpool1d, find_tensor_highest_peaks
 
 class Encoder(nn.Module):
     def __init__(self, in_shape=30051, n_skips=3, total_emis_channels=1, ks_lst=[3,4,4,9], in_channels=1, n_classes_channels=1, out_channels_lst=[8,16,16,10], pd_lst=[True, True, True, True, True, True], dilation=1, stride_lst=[1,2,2,1], skip_pad=6, add_fc=False):

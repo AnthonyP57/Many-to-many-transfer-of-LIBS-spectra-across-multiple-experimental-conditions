@@ -7,9 +7,9 @@ import torch.nn.functional as F
 from sklearn.model_selection import train_test_split
 import numpy as np
 from data_visualization import xy_plot, confusion_matrix_plot
-from spectra_normalization import to_onehot
+from libs_transfer.prepare_data.spectra_normalization import to_onehot
 import time
-from spectra_normalization import size_after_conv1d, size_after_avgpool1d
+from libs_transfer.prepare_data.spectra_normalization import size_after_conv1d, size_after_avgpool1d
 import h5py
 
 epochs = 100
