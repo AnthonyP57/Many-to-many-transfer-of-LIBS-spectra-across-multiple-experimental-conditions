@@ -4,6 +4,13 @@ This repository is actively being refactored to make it as easy to use as possib
 > [!IMPORTANT]
 > Data used in the publication can be accessed [here](https://drive.google.com/drive/folders/1hzWN3hNHsi6lETYezgJcnDMf3yyKKAF9?usp=sharing)
 
+__*The package is available as*__
+```bash
+pip install libs-transfer
+# or
+uv add libs-transfer
+```
+
 ## Quick Start: The Full Pipeline
 If your data directories are already set up, you can run the entire data extraction, CNN baseline training, and ACVAE evaluation pipeline in just a few lines of code.
 
