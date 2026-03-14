@@ -1,5 +1,5 @@
 import numpy as np
-from modules import ConvBatchNormGLU1D, DeConvBatchNormGLU1D, concat_dim1, gaussian_repar, kl_loss, gauss_negative_log_like, add_total_emis
+from libs_transfer.training.modules import ConvBatchNormGLU1D, DeConvBatchNormGLU1D, concat_dim1, gaussian_repar, kl_loss, gauss_negative_log_like, add_total_emis
 import torch.nn as nn
 import torch
 import torch.nn.functional as F

@@ -101,6 +101,8 @@ def train_concentration_predictors(epochs=40, batch_size=128, data_folder='./exa
         all_atm = np.array(hf['atm_one_hot'][()])
         all_ene = np.array(hf['energy_one_hot'][()])
 
+        num_energies = all_ene.shape[1]
+
         conditions = np.array([np.kron(row1, row2) for row1, row2 in zip(all_atm, all_ene)])
 
     with open(os.path.join(data_folder, 'label_dict.json'), 'r') as fp:
@@ -108,6 +110,9 @@ def train_concentration_predictors(epochs=40, batch_size=128, data_folder='./exa
 
     with open(os.path.join(data_folder, 'atm_dict.json'), 'r') as fp:
         chosen_to_name = json.load(fp)
+
+    with open(os.path.join(data_folder, 'perc_dict.json'), 'r') as fp:
+        en_dict = json.load(fp)
 
     conc_df = pd.read_excel(os.path.join(data_folder, 'Concentrations.xlsx'))
     conc_df = conc_df.dropna().transpose()
@@ -128,7 +133,7 @@ def train_concentration_predictors(epochs=40, batch_size=128, data_folder='./exa
 
     all_spectra = emis_std.transform(all_spectra)
 
-    for _chosen_cond in map(lambda x: int(x), chosen_to_name.keys()):
+    for _chosen_cond in range(conditions.shape[1]):
 
         chosen_cond = np.where(np.argmax(conditions, axis=1) == _chosen_cond)[0]
 
@@ -142,10 +147,14 @@ def train_concentration_predictors(epochs=40, batch_size=128, data_folder='./exa
         conc_std = StandardScaler().fit(concentrations)
         concentrations = conc_std.transform(concentrations)
 
-        condition_text = chosen_to_name[str(_chosen_cond)]
+        cond_ = _chosen_cond // num_energies
+        en_ = _chosen_cond % num_energies
 
-        joblib.dump(conc_std, os.path.join(data_folder, f'conc_std_{condition_text}.joblib'))
-        joblib.dump(emis_std, os.path.join(data_folder, f'spectra_std_{condition_text}.joblib'))
+        condition_text = chosen_to_name[str(cond_)]
+        energy_text = en_dict[str(en_)]
+
+        joblib.dump(conc_std, os.path.join(data_folder, f'conc_std_{condition_text}_{energy_text}.joblib'))
+        joblib.dump(emis_std, os.path.join(data_folder, f'spectra_std_{condition_text}_{energy_text}.joblib'))
 
         current_spectra = all_spectra[chosen_cond][non_zero_idx]
 
@@ -158,7 +167,7 @@ def train_concentration_predictors(epochs=40, batch_size=128, data_folder='./exa
 
         output_size = concentrations.shape[1]
         inshape = x_train.shape[1]
-        print(f'Input shape for condition {condition_text}: {inshape}, output shape: {output_size}')
+        print(f'Input shape for condition {condition_text} at {energy_text}: {inshape}, output shape: {output_size}')
 
         model = CNN(output_size=output_size, inshape=inshape).to(device)
 
@@ -235,9 +244,9 @@ def train_concentration_predictors(epochs=40, batch_size=128, data_folder='./exa
 
             rmse = np.sqrt(np.mean((y - pred)**2, axis=0))
             mae = np.mean(np.abs(y - pred), axis=0)
-            print(f'Condition: {condition_text}\nElements:')
+            print(f'Condition: {condition_text} Energy: {energy_text}\nElements:')
             print(elements)
             print(f'RMSE: {rmse}\n MAE: {mae}\n\n')
 
-        torch.save(model, os.path.join(data_folder, f'CNN_{condition_text}.pth'))
-        torch.save(model.state_dict(), os.path.join(data_folder, f'CNN_{condition_text}_state_dict.pth'))
+        torch.save(model, os.path.join(data_folder, f'CNN_{condition_text}_{energy_text}.pth'))
+        torch.save(model.state_dict(), os.path.join(data_folder, f'CNN_{condition_text}_{energy_text}_state_dict.pth'))

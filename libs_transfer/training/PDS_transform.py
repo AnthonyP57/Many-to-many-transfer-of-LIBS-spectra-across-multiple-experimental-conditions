@@ -1,4 +1,4 @@
-from PDS import piecewise_direct_standardization_pytorch
+from libs_transfer.training.PDS import piecewise_direct_standardization_pytorch
 import h5py
 import numpy as np
 from modules import SpectraDataset, ClassDataset, PDS_test_spectra, train_test_spectra_idx, train_test_spectra_samples, PDSDataset

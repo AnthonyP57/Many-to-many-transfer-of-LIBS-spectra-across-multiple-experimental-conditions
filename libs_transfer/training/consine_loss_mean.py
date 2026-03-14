@@ -1,13 +1,7 @@
-import random
 import h5py
 import numpy as np
 from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from match_clusters import map_labels
-from numpy import dot
-from numpy.linalg import norm
+from sklearn.preprocessing import StandardScaler
 from scipy import spatial
 
 with h5py.File('/home/anthonyp57/VSCode_projects/Spectra_transfer/git_code/ACVAE/new_data/spectra.h5', 'r') as hf:
