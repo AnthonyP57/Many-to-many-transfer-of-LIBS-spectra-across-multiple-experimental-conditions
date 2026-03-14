@@ -9,59 +9,6 @@ import numpy as np
 import random
 import os
 
-def create_random_combined_list(list1, list2):
-    random_mask = np.random.randint(2, size=list1.shape)
-    combined_array = np.where(random_mask, list2, list1)
-    return combined_array
-
-class PDSDataset(Dataset):
-    def __init__(self, spectra, conditions, labels):
-        super().__init__()
-        self.spectra = spectra
-        self.conditions = conditions
-        self.labels = labels
-
-        self.n_cond = set(np.argmax(conditions, axis=1))
-        self.n_labels = set(np.argmax(labels, axis=1))
-
-        self._prepare_data()
-
-    def _prepare_data(self):
-        data = [[] for _ in self.n_cond]
-        for c in self.n_cond:
-            c_data=[]
-            cond_idx = np.where(np.argmax(self.conditions, axis=1) == c)[0]
-            for l in self.n_labels:
-                label_idx = np.where(np.argmax(self.labels, axis=1) == l)[0]
-                label_idx = [i for i in label_idx if i in cond_idx]
-                c_data.append(self.spectra[label_idx])
-            c_data = np.concatenate(c_data)
-            data[c] = c_data
-
-        data = itertools.combinations(((c, data) for c, data in zip(self.n_cond, data)), 2)
-        data = list(data)
-        data_pairs=[]
-        for pair in data:
-            data_pairs.append([torch.tensor(pair[0][1]), torch.tensor(pair[1][1]), torch.tensor(pair[0][0]), torch.tensor(pair[1][0])])
-
-        self.data_pairs = data_pairs
-
-    def __getitem__(self, idx):
-        return self.data_pairs[idx]
-    
-def divide_into_sublists(input_list):
-    sublists = {}
-
-    for item in input_list:
-        if item not in sublists:
-            sublists[item] = []
-        sublists[item].append(item)
-
-    lens = list(sublists.values())
-    vals = [i[0] for i in lens]
-    lens = [len(i) for i in lens]
-    return lens, vals
-
 class ModelConfig:
     def __init__(self, checkpoint_path, lr, wd, ks_list, stride_list, channel_list, skip_pad, resume=False, fc=False, pretrain=True):
         self.lr = lr
@@ -112,7 +59,7 @@ class ModelConfig:
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
             'config': self.get_config(epoch+1)},
-                   self.checkpoint_path+f'{self.lr}_{self.wd}_{self.ks_list}_{self.stride_list}_{self.channel_list}_{self.skip_pad}_{self.fc}.pth')
+                self.checkpoint_path+f'{self.lr}_{self.wd}_{self.ks_list}_{self.stride_list}_{self.channel_list}_{self.skip_pad}_{self.fc}.pth')
 
 def train_test_spectra_samples(conditions, labels, test_split=0.1, seed=42):
     random.seed(seed)
@@ -140,27 +87,6 @@ def train_test_spectra_samples(conditions, labels, test_split=0.1, seed=42):
 
     return train_, test_
 
-def train_test_spectra_idx(conditions, labels, test_split=0.1, seed=42):
-    random.seed(seed)
-    all_conditions_idx = set(np.argmax(conditions, axis=1))
-    all_labels_idx = set(np.argmax(labels, axis=1))
-
-    test_=[]
-    train_=[]
-
-    for c in all_conditions_idx:
-        condition_idx = set(np.where(np.argmax(conditions, axis=1) == c)[0])
-
-        for l in all_labels_idx:
-            label_idx = set(np.where(np.argmax(labels, axis=1) == l)[0])
-            label_idx = [i for i in label_idx if i in condition_idx]
-            test_idx = random.sample(label_idx, int(len(label_idx) * test_split))
-            train_idx = [i for i in label_idx if i not in test_idx]
-            test_.extend(test_idx)
-            train_.extend(train_idx)
-
-    return train_, test_
-
 def ACVAE_test_spectra(reg_conditions_dict, conc_df, std, all_labels, all_spectra, total_emis, condition_index_in, condition_index_out, in_idx, out_idx, num_conditions):
 
     y_in = torch.zeros((len(condition_index_in), num_conditions))
@@ -184,20 +110,6 @@ def ACVAE_test_spectra(reg_conditions_dict, conc_df, std, all_labels, all_spectr
 
     return in_to_out, cond_conc, condition_labels_[non_zero_idx]
 
-def PDS_test_spectra(reg_conditions_dict, conc_df, std, all_labels, all_spectra, condition_index):
-    condition_labels = all_labels[condition_index]
-    condition_labels = np.argmax(condition_labels, axis=1)
-    condition_labels = np.array([reg_conditions_dict[str(i)] for i in condition_labels])
-    cond_conc = np.array([conc_df.loc[name].to_list() if name in conc_df.index else [0] * conc_df.shape[1] for name in condition_labels])
-    non_zero_idx = np.where(cond_conc[:, 0] != 0)[0]
-    cond_conc = cond_conc[non_zero_idx]
-    cond_conc = std.transform(cond_conc)
-
-    # --- DYNAMIC FIX: Generalize variable name ---
-    condition_test_spectra = all_spectra[condition_index][non_zero_idx]
-
-    return condition_test_spectra, cond_conc
-
 class FullDataset(Dataset):
     def __init__(self, spectra, y_in, y_out, e_in, e_out):
         self.spectra = torch.from_numpy(spectra.astype(np.float32))
@@ -211,15 +123,6 @@ class FullDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.spectra[idx], self.y_in[idx], self.y_out[idx], self.e_in[idx], self.e_out[idx]
-
-class StandardScalerTensor(nn.Module):
-    def __init__(self, scaler):
-        super(StandardScalerTensor, self).__init__()
-        self.register_buffer('mean', torch.tensor(scaler.mean_))
-        self.register_buffer('std', torch.tensor(scaler.scale_))
-
-    def forward(self, x):
-        return (x - self.mean) / self.std
 
 class ClassDataset(Dataset):
     def __init__(self, x, y):
@@ -311,11 +214,11 @@ class SpectraDataset(Dataset):
 
                     data_samples.append(
                                         (torch.from_numpy(pair[0][s][rand_idx_0].astype(np.float32)), #data0
-                                         torch.from_numpy(pair[1][s][rand_idx_1].astype(np.float32)), #data1
-                                         torch.from_numpy(cond_0.astype(np.float32)), #y0
-                                         torch.from_numpy(cond_1.astype(np.float32)), #y1
-                                         torch.from_numpy(pair[4][s][rand_idx_0].astype(np.float32)), #total emis0
-                                         torch.from_numpy(pair[5][s][rand_idx_1].astype(np.float32))) #total emis1
+                                        torch.from_numpy(pair[1][s][rand_idx_1].astype(np.float32)), #data1
+                                        torch.from_numpy(cond_0.astype(np.float32)), #y0
+                                        torch.from_numpy(cond_1.astype(np.float32)), #y1
+                                        torch.from_numpy(pair[4][s][rand_idx_0].astype(np.float32)), #total emis0
+                                        torch.from_numpy(pair[5][s][rand_idx_1].astype(np.float32))) #total emis1
                                         )
 
         if shuffle_data_pairs:
@@ -349,17 +252,6 @@ def gauss_negative_log_like(x, x_mu, x_ln_var): # Copyright 2021 Hirokazu Kameok
     x_power = (x_diff * x_diff) * x_prec * -0.5
     like_loss = torch.mean((x_ln_var + math.log(2 * math.pi)) / 2 - x_power)
     return like_loss
-
-def calculate_model_size(model):
-    param_size = 0
-    for param in model.parameters():
-        param_size += param.nelement() * param.element_size()
-    buffer_size = 0
-    for buffer in model.buffers():
-        buffer_size += buffer.nelement() * buffer.element_size()
-
-    size_all_mb = (param_size + buffer_size) / 1024 ** 2
-    print('model size: {:.3f}MB'.format(size_all_mb))
 
 class ConvBatchNormGLU1D(nn.Module):
     def __init__(self, ks, in_channels=1, out_channels=4, pd=0, dilation=1, stride=1):

@@ -120,27 +120,27 @@ def load_auxiliary_models(spectra_shape, conditions, test_idx, atm_dict, en_dict
     return models_dict, scalers_dict, indices_dict
 
 def generate_transfer_pairs(num_conditions, scalers_dict, reg_conditions_dict, conc_df, labels, all_spectra, total_emis, test_idx, indices_dict):
-    transform_target_dict = {i: [] for i in range(num_conditions)}
-    target_conc_dict = {i: [] for i in range(num_conditions)}
-    
-    all_pairs = list(itertools.permutations(range(num_conditions), 2))
+    transfer_dict = {}
+    permutations = list(itertools.permutations(range(num_conditions), 2))
 
-    for source_idx, target_idx in all_pairs:
-        if source_idx not in scalers_dict or target_idx not in scalers_dict:
+    for src_idx, tgt_idx in permutations:
+        if src_idx not in scalers_dict or tgt_idx not in scalers_dict:
             continue
 
-        result = ACVAE_test_spectra(
-            reg_conditions_dict, conc_df, scalers_dict[source_idx], 
+        in_to_out, cond_conc, cond_labels = ACVAE_test_spectra(
+            reg_conditions_dict, conc_df, scalers_dict[src_idx], 
             labels[test_idx], all_spectra[test_idx], total_emis[test_idx], 
-            indices_dict[source_idx], indices_dict[target_idx], source_idx, target_idx,
+            indices_dict[src_idx], indices_dict[tgt_idx], src_idx, tgt_idx,
             num_conditions
         )
         
-        transformed_data, source_conc, _ = result
-        transform_target_dict[target_idx].append(transformed_data)
-        target_conc_dict[target_idx].append(source_conc)
+        transfer_dict[(src_idx, tgt_idx)] = {
+            'data': in_to_out,
+            'conc': cond_conc,
+            'labels': cond_labels
+        }
 
-    return transform_target_dict, target_conc_dict
+    return transfer_dict, permutations
 
 def build_acvae_model(config, conditions_shape, mean, std_, device, n_conditions):
     classifier = Classifier(n_classes=conditions_shape[1]).to(device)
@@ -216,66 +216,69 @@ def train_epoch(acvae, ds, optimizer, device):
         
     return {k: v/n_all for k, v in metrics.items()}
 
-def evaluate_acvae(acvae, num_conditions, models_dict, scalers_dict, transform_target_dict, target_conc_dict, std, emis_std, labels, test_idx, device, eval_km_mean, eval_km_raw, eval_cos_mean, eval_cos_raw):
+def evaluate_acvae(acvae, models_dict, scalers_dict, transfer_dict, permutations, std, emis_std, labels, test_idx, device, eval_km_mean, eval_km_raw, eval_cos_mean, eval_cos_raw):
     acvae.eval()
-    all_preds_by_target = {i: [] for i in range(num_conditions)}
-    all_transformed_by_target = {i: [] for i in range(num_conditions)}
-    final_ys, final_preds = [], []
+    all_final_ys, all_final_preds, all_cnn_preds = [], [], []
+    test_spectra_mean_list, test_spectra_list = [], []
+    target_labels = np.unique(np.argmax(labels[test_idx], axis=1)) 
     
     with torch.no_grad():
-        for target_idx in range(num_conditions):
-            if target_idx not in models_dict: continue
+        for src, tgt in permutations:
+            if tgt not in models_dict: continue
             
-            model = models_dict[target_idx]
-            scaler = scalers_dict[target_idx]
+            model = models_dict[tgt]
+            scaler = scalers_dict[tgt]
+            data_batch = transfer_dict[(src, tgt)]['data']
+            source_conc = transfer_dict[(src, tgt)]['conc']
+            cond_labels = transfer_dict[(src, tgt)]['labels']
             
-            for data_batch in transform_target_dict[target_idx]:
-                a = []
-                for x_0, y_0, y_1, e_0, e_1 in data_batch:
-                    x_01 = acvae(x_0.to(device), y_0.to(device), y_1.to(device), e_0.to(device), e_1.to(device), crop_by=25)
-                    x_01 = x_01.cpu().detach().numpy().reshape(x_01.shape[0], -1)
-                    x_01 = np.maximum(std.inverse_transform(np.pad(x_01, ((0, 0), (25, 25)), mode='constant')), 0)
-                    x_01 = emis_std.transform(x_01 / np.sum(x_01, axis=1, keepdims=True))[:, 25:-25]
-                    a.append(x_01.reshape(-1, x_01.shape[-1]))
-
-                    x_0_orig = emis_std.transform(std.inverse_transform(x_0.cpu().detach()) / np.sum(std.inverse_transform(x_0.cpu().detach()), axis=1, keepdims=True))[:, 25:-25]
-                    pred = model(torch.tensor(x_0_orig, dtype=torch.float).to(device))
-                    all_preds_by_target[target_idx].append(scaler.inverse_transform(pred.cpu().detach().numpy()))
-
-                if a: all_transformed_by_target[target_idx].append(np.concatenate(a, axis=0))
-
-        for target_idx in range(num_conditions):
-            if target_idx not in models_dict: continue
+            target_transformed_list = []
+            target_orig_preds = []
             
-            model = models_dict[target_idx]
-            scaler = scalers_dict[target_idx]
-            
-            for d_, l_ in zip(all_transformed_by_target[target_idx], target_conc_dict[target_idx]):
-                test_dataloader = DataLoader(ClassDataset(d_, l_), batch_size=25)
-                for x, y in test_dataloader:
-                    pred = model(x.to(device))
-                    final_preds.append(scaler.inverse_transform(pred.cpu().detach().numpy()))
-                    final_ys.append(scaler.inverse_transform(y.to(device).cpu().detach().numpy()))
+            for x_0, y_0, y_1, e_0, e_1 in data_batch:
+                x_01 = acvae(x_0.to(device), y_0.to(device), y_1.to(device), e_0.to(device), e_1.to(device), crop_by=25)
+                x_01 = x_01.cpu().detach().numpy().reshape(x_01.shape[0], -1)
+                x_01 = np.maximum(std.inverse_transform(np.pad(x_01, ((0, 0), (25, 25)), mode='constant')), 0)
+                x_01 = emis_std.transform(x_01 / np.sum(x_01, axis=1, keepdims=True))[:, 25:-25]
+                target_transformed_list.append(x_01.reshape(-1, x_01.shape[-1]))
 
-    ys = np.concatenate(final_ys, axis=0) if final_ys else np.array([])
-    preds = np.concatenate(final_preds, axis=0) if final_preds else np.array([])
-    cnn_preds = np.concatenate([np.concatenate(v, axis=0) for v in all_preds_by_target.values() if v], axis=0) if any(all_preds_by_target.values()) else np.array([])
+                x_0_orig = emis_std.transform(std.inverse_transform(x_0.cpu().detach()) / np.sum(std.inverse_transform(x_0.cpu().detach()), axis=1, keepdims=True))[:, 25:-25]
+                pred = model(torch.tensor(x_0_orig, dtype=torch.float).to(device))
+                target_orig_preds.append(scaler.inverse_transform(pred.cpu().detach().numpy()))
+
+            if not target_transformed_list: continue
+            
+            target_transformed = np.concatenate(target_transformed_list, axis=0)
+            target_orig_preds = np.concatenate(target_orig_preds, axis=0)
+            
+            test_spectra_list.append(target_transformed)
+            
+            for lab in target_labels:
+                lab_indices = np.where(cond_labels == lab)[0]
+                if len(lab_indices) > 0:
+                    test_spectra_mean_list.append(np.mean(target_transformed[lab_indices], axis=0))
+                else:
+                    test_spectra_mean_list.append(np.zeros_like(target_transformed[0]))
+
+            pair_preds, pair_ys = [], []
+            test_dataloader = DataLoader(ClassDataset(target_transformed, source_conc), batch_size=25)
+            for x, y in test_dataloader:
+                pred = model(x.to(device))
+                pair_preds.append(scaler.inverse_transform(pred.cpu().detach().numpy()))
+                pair_ys.append(scaler.inverse_transform(y.numpy()))
+                
+            all_final_ys.append(np.concatenate(pair_ys, axis=0))
+            all_final_preds.append(np.concatenate(pair_preds, axis=0))
+            all_cnn_preds.append(target_orig_preds)
+
+    ys = np.concatenate(all_final_ys, axis=0) if all_final_ys else np.array([])
+    preds = np.concatenate(all_final_preds, axis=0) if all_final_preds else np.array([])
+    cnn_preds = np.concatenate(all_cnn_preds, axis=0) if all_cnn_preds else np.array([])
     
     rmse, rmse_cnn = None, None
     if len(ys) > 0 and len(preds) > 0:
         rmse = np.round(np.sqrt(np.mean((ys - preds) ** 2, axis=0)), 3)
         rmse_cnn = np.round(np.sqrt(np.mean((cnn_preds - preds) ** 2, axis=0)), 3)
-
-    test_spectra_mean_list, test_spectra_list = [], []
-    for target_idx in range(num_conditions):
-        if all_transformed_by_target[target_idx]:
-            target_data = np.concatenate(all_transformed_by_target[target_idx], axis=0)
-            test_spectra_list.append(target_data)
-            
-            for lab in np.unique(np.argmax(labels[test_idx], axis=1)): 
-                lab_indices = np.where(np.argmax(labels[test_idx], axis=1) == lab)[0]
-                if len(lab_indices) > 0 and lab_indices.max() < target_data.shape[0]:
-                    test_spectra_mean_list.append(np.mean(target_data[lab_indices], axis=0))
 
     clus_acc, clus_loss, clus_acc_, clus_loss_, cosine_sim, cosine_sim_ = 0,0,0,0,0,0
     if test_spectra_mean_list:
@@ -290,7 +293,7 @@ def evaluate_acvae(acvae, num_conditions, models_dict, scalers_dict, transform_t
 
     return rmse, rmse_cnn, clus_acc, clus_acc_, cosine_sim, cosine_sim_
 
-def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_dir='./examples/processed_data/', epochs=5, batch_size=64, device=None):
+def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_dir='./examples/processed_data/', epochs=5, batch_size=64, device=None, test_split=0.5):
     if device is None:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
@@ -298,7 +301,7 @@ def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_
 
     all_spectra, conditions, labels, wavelen, s0_idx, slast_idx = prepare_training_data(data_path)
     all_spectra, emis_std, total_emis, mean, std_, std = preprocess_training_data(all_spectra)
-    train_idx, test_idx = train_test_spectra_samples(conditions, labels, test_split=0.5)
+    train_idx, test_idx = train_test_spectra_samples(conditions, labels, test_split=test_split)
 
     ds = SpectraDataset(all_spectra[train_idx], conditions[train_idx], labels[train_idx], total_emis[train_idx], batch_size=batch_size)
     ds.random_select_samples(shuffle_data_pairs=True)
@@ -307,18 +310,21 @@ def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_
     models_dict, scalers_dict, indices_dict = load_auxiliary_models(all_spectra.shape[1], conditions, test_idx, atm_dict, en_dict, data_dir, device)
     
     num_conditions = conditions.shape[1]
-    transform_target_dict, target_conc_dict = generate_transfer_pairs(
+    transfer_dict, permutations = generate_transfer_pairs(
         num_conditions, scalers_dict, reg_conditions_dict, conc_df, 
         labels, all_spectra, total_emis, test_idx, indices_dict
     )
 
     target_labels = np.unique(np.argmax(labels[test_idx], axis=1)) 
-    
-    mean_spectra_dict = compute_mean_reference_spectra(all_spectra, conditions, labels, target_labels)
-    stacked_mean_ref = build_reference_stack(mean_spectra_dict, num_conditions, target_labels)
-    raw_spectra_dict = get_raw_spectra_subsets(all_spectra, conditions, labels, target_labels)
-    stacked_raw_ref = build_raw_reference_stack(raw_spectra_dict, num_conditions, target_labels)
 
+    all_spectra_cropped = all_spectra[:, 25:-25]
+    
+    mean_spectra_dict = compute_mean_reference_spectra(all_spectra_cropped, conditions, labels, target_labels)
+    stacked_mean_ref = build_reference_stack(mean_spectra_dict, num_conditions, target_labels)
+    
+    raw_spectra_dict = get_raw_spectra_subsets(all_spectra_cropped, conditions, labels, target_labels)
+    stacked_raw_ref = build_raw_reference_stack(raw_spectra_dict, num_conditions, target_labels)
+    
     eval_cos_mean = PCAMeanSpectraEvaluator(stacked_mean_ref, n_components=15)
     eval_cos_raw = PCASpectraEvaluator(stacked_raw_ref, n_components=15)
     eval_km_mean = KMeansMeanSpectraEvaluator(stacked_mean_ref, n_components=15, k_clusters=6)
@@ -345,8 +351,8 @@ def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_
         iterator.set_postfix(losses)
 
         rmse, rmse_cnn, c_acc, c_acc_, c_sim, c_sim_ = evaluate_acvae(
-            acvae, num_conditions, models_dict, scalers_dict, transform_target_dict, 
-            target_conc_dict, std, emis_std, labels, test_idx, device,
+            acvae, models_dict, scalers_dict, transfer_dict, permutations, 
+            std, emis_std, labels, test_idx, device,
             eval_km_mean, eval_km_raw, eval_cos_mean, eval_cos_raw
         )
         

@@ -75,15 +75,6 @@ def normalize_by_total_emissivity(spectra):
     out_spectra = np.array(out_spectra)
     return out_spectra
 
-
-def crop_spectra(spectra, crop_size : tuple = (250, 860)):
-    out_spectra = []
-    for spc in spectra:
-        out_spectra.append(spc[crop_size[0]:crop_size[1]])
-
-    out_spectra = np.array(out_spectra)
-    return out_spectra
-
 def to_onehot(arr):
     """
     Convert a NumPy array with str labels to a one-hot encoded array.
@@ -111,25 +102,12 @@ def to_onehot(arr):
 
     return onehot_arr, label_dict
 
-def size_after_conv1d(in_size, kernel_size, padding=0, dilation=1, stride=1):
-    # conv1d_output_size = (input_size + 2*padding - dilation*(kernel_size-1) - 1) / stride + 1
-    #padding = 0
-    #dilation = 1
-    #stride = 1
-    return int((in_size + 2 * padding - dilation * (kernel_size - 1) - 1) / stride + 1)
-
 def calc_padding(kernel_size, dilation, causal=False, stride=1):
     if causal:
         padding = (kernel_size-1)*dilation+1-stride
     else:
         padding = ((kernel_size-1)*dilation+1-stride)//2
     return padding
-
-def size_after_avgpool1d(in_size, kernel_size, stride):
-    # avgpool1d_output_size = (input_size + 2*padding - kernel_size) / stride + 1
-    #padding = 0
-    #stride = 1
-    return int((in_size + 2 * 0 - kernel_size) / stride + 1)
 
 def find_pixels_idx(dimx = 961, dimy = 994, divide_by = 4):
     """

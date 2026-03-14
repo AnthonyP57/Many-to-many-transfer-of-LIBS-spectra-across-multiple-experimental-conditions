@@ -3,6 +3,7 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.metrics import accuracy_score
 from scipy import spatial
+import itertools
 
 from libs_transfer.training.match_clusters import map_labels
 
@@ -30,12 +31,10 @@ def compute_mean_reference_spectra(all_spectra, conditions, labels, target_label
 def build_reference_stack(mean_spectra_dict, num_conditions, target_labels):
     """Stacks the mean spectra to match the permutation evaluations in ACVAE."""
     stacked_list = []
-    for target_idx in range(num_conditions):
-        for source_idx in range(num_conditions):
-            if source_idx == target_idx:
-                continue
-            for label in target_labels:
-                stacked_list.append(mean_spectra_dict[target_idx][label])
+    for src_idx, tgt_idx in itertools.permutations(range(num_conditions), 2):
+        for label in target_labels:
+            stacked_list.append(mean_spectra_dict[tgt_idx][label])
+            
     return np.vstack(stacked_list)
 
 def get_raw_spectra_subsets(all_spectra, conditions, labels, target_labels):
@@ -61,18 +60,14 @@ def get_raw_spectra_subsets(all_spectra, conditions, labels, target_labels):
 def build_raw_reference_stack(spectra_dict, num_conditions, target_labels):
     """Concatenates the raw spectra to match the permutation evaluations in ACVAE."""
     stacked_list = []
-    for target_idx in range(num_conditions):
-        for source_idx in range(num_conditions):
-            if source_idx == target_idx:
-                continue
-            for label in target_labels:
-                if len(spectra_dict[target_idx][label]) > 0:
-                    stacked_list.append(spectra_dict[target_idx][label])
-                    
+    for src_idx, tgt_idx in itertools.permutations(range(num_conditions), 2):
+        for label in target_labels:
+            if len(spectra_dict[tgt_idx][label]) > 0:
+                stacked_list.append(spectra_dict[tgt_idx][label])
+                
     if stacked_list:
         return np.concatenate(stacked_list, axis=0)
     return np.array([])
-
 
 
 class PCAMeanSpectraEvaluator:

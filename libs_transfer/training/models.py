@@ -3,10 +3,10 @@ from libs_transfer.training.modules import ConvBatchNormGLU1D, DeConvBatchNormGL
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from libs_transfer.prepare_data.spectra_normalization import calc_padding, size_after_conv1d, find_tensor_highest_peaks
+from libs_transfer.prepare_data.spectra_normalization import calc_padding, find_tensor_highest_peaks
 
 class Encoder(nn.Module):
-    def __init__(self, in_shape=30051, n_skips=3, total_emis_channels=1, ks_lst=[3,4,4,9], in_channels=1, n_classes_channels=1, out_channels_lst=[8,16,16,10], pd_lst=[True, True, True, True, True, True], dilation=1, stride_lst=[1,2,2,1], skip_pad=6, add_fc=False):
+    def __init__(self, total_emis_channels=1, ks_lst=[3,4,4,9], in_channels=1, n_classes_channels=1, out_channels_lst=[8,16,16,10], pd_lst=[True, True, True, True, True, True], dilation=1, stride_lst=[1,2,2,1], skip_pad=6, add_fc=False):
         super(Encoder, self).__init__()
 
         if add_fc:
@@ -108,21 +108,20 @@ class Encoder(nn.Module):
         x = add_total_emis(x, e)
         x = self.l6(x)
 
-        # print(x.shape, merge.shape)
 
         x += merge
 
         x = concat(x, y)
         x = add_total_emis(x, e)
         x = self.conv(x)
-        # x = x.clone()[:, :, 0:data]
+
         mu, ln_var = torch.split(x, x.shape[1] // 2, dim=1)
 
         ln_var = torch.clamp(ln_var, min=-50.0, max=0.0)  # used for variance
         return mu, ln_var
 
 class Decoder(nn.Module):
-    def __init__(self, in_shape=30051, total_emis_channels=1, ks_lst=[9,4,4,3], in_channels=10, n_classes_channels=1, out_channels_lst=[16,18,8,1], pd_lst=[True, True, True, True, True, True], dilation=1, stride_lst=[1,2,2,1], skip_pad=6, add_fc=False):
+    def __init__(self, total_emis_channels=1, ks_lst=[9,4,4,3], in_channels=10, n_classes_channels=1, out_channels_lst=[16,18,8,1], pd_lst=[True, True, True, True, True, True], dilation=1, stride_lst=[1,2,2,1], skip_pad=6, add_fc=False):
         super(Decoder, self).__init__()
 
         if add_fc:
@@ -301,189 +300,6 @@ class Classifier(nn.Module):
         x = self.drop4(self.l4(x))
         x += skip
         x = self.l5(x)
-        return x
-
-class Discriminator_c(nn.Module):
-    def __init__(self, ks_lst=[5,4,4,4,5], in_channels=1, n_classes=2, out_channels_lst=[8,8,8,8], pd_lst=[True, True, True, True], dilation=1, stride_lst=[1,2,2,2,1], drop=0.2):
-        super(Discriminator_c, self).__init__()
-        self.l1 = ConvBatchNormGLU1D(ks=ks_lst[0],
-                                     in_channels=in_channels,
-                                     out_channels=out_channels_lst[0],
-                                     pd=pd_lst[0],
-                                     dilation=dilation,
-                                     stride=stride_lst[0],)
-
-        self.l2 = ConvBatchNormGLU1D(ks=ks_lst[1],
-                                     in_channels=out_channels_lst[0],
-                                     out_channels=out_channels_lst[1],
-                                     pd=pd_lst[1],
-                                     dilation=dilation,
-                                     stride=stride_lst[1])
-
-        self.l3 = ConvBatchNormGLU1D(ks=ks_lst[2],
-                                     in_channels=out_channels_lst[1],
-                                     out_channels=out_channels_lst[2],
-                                     pd=pd_lst[2],
-                                     dilation=dilation,
-                                     stride=stride_lst[2])
-
-        self.l4 = ConvBatchNormGLU1D(ks=ks_lst[3],
-                                     in_channels=out_channels_lst[2],
-                                     out_channels=out_channels_lst[3],
-                                     pd=pd_lst[3],
-                                     dilation=dilation,
-                                     stride=stride_lst[3])
-
-        self.l5 = nn.Conv1d(in_channels=out_channels_lst[3],
-                            out_channels=n_classes,
-                            kernel_size=ks_lst[4],
-                            stride=stride_lst[4],
-                            padding=calc_padding(ks_lst[4], dilation, False, stride_lst[4]))
-
-        self.drop1 = nn.Dropout(p=drop)
-        self.drop2 = nn.Dropout(p=drop)
-        self.drop3 = nn.Dropout(p=drop)
-        self.drop4 = nn.Dropout(p=drop)
-
-    def forward(self, x):
-        x = self.drop1(self.l1(x))
-        x = self.drop2(self.l2(x))
-        x = self.drop3(self.l3(x))
-        x = self.drop4(self.l4(x))
-        x = self.l5(x)
-        return x
-
-class Classifier2(nn.Module):
-    def __init__(self, in_channels=1000, n_classes=3):
-        super(Classifier2, self).__init__()
-        self.l1 = nn.Linear(in_channels, 1024)
-        self.l2 = nn.Linear(1024, 512)
-        self.l3 = nn.Linear(512, n_classes)
-
-    def forward(self, x):
-        x = self.l1(x)
-        x = F.relu(x)
-        x = self.l2(x)
-        x = F.relu(x)
-        x = self.l3(x)
-        return x
-
-class MLP(nn.Module):
-    def __init__(self, input_size, neurons, drop=0.2):
-        super(MLP, self).__init__()
-        self.input_size = input_size
-        layers = []
-        in_dim = input_size
-
-        for nodes in neurons:
-            layers.append(nn.Linear(in_dim, nodes))
-            layers.append(nn.LeakyReLU())
-            layers.append(nn.Dropout(p=drop))
-            in_dim = nodes
-
-        self.sequential = nn.Sequential(*layers)
-        self.fc = nn.Linear(neurons[-1], 1)
-
-    def forward(self, input):
-
-        x = self.sequential(input)
-        output = self.fc(x)
-        output = torch.sigmoid(output)
-
-        return output
-
-class CNN(nn.Module):
-    def __init__(self, input_size, input_channels, out_channels1, output_size):
-        super(CNN, self).__init__()
-        self.input_channels = input_channels
-        self.out_channels1 = out_channels1
-        self.kernel_size = 6
-
-        # feature size after convolutions and pools
-        self.size_after_conv1 = size_after_conv1d(input_size, out_channels1, self.kernel_size, stride=2)
-
-        self.c1 = nn.Conv1d(input_channels, out_channels1, self.kernel_size, stride=3)
-        self.c2 = nn.Conv1d(out_channels1, out_channels1 * 2, self.kernel_size, stride=2)
-        self.pool = nn.AvgPool1d(2)
-
-        self.fc1 = nn.Linear(288, 128)
-        self.fc2 = nn.Linear(128, 3)
-
-    def forward(self, input):
-        batch_size = input.size(0)
-
-        x = self.c1(input)
-        x = self.pool(x)
-        x = self.c2(x)
-
-        # Reshape to (batch_size x -1) for fc
-        x = x.view(batch_size, -1)
-        x = F.leaky_relu(self.fc1(x))
-        output = self.fc2(x)
-
-        return output
-
-class CNN_d(nn.Module):
-    def __init__(self, input_size, input_channels, out_channels1):
-        super(CNN_d, self).__init__()
-        self.input_channels = input_channels
-        self.out_channels1 = out_channels1
-        self.kernel_size = 6
-
-        #feature size after convolutions and pools
-        self.size_after_conv1 = size_after_conv1d(input_size, out_channels1, self.kernel_size, stride=2)
-
-        self.c1 = nn.Conv1d(input_channels, out_channels1, self.kernel_size, stride=2)
-        self.c2 = nn.Conv1d(out_channels1, out_channels1*2, self.kernel_size, stride=2)
-        self.pool = nn.AvgPool1d(2)
-
-        self.drop1 = nn.Dropout(p=0.5)
-        self.drop2 = nn.Dropout(p=0.5)
-        self.drop3 = nn.Dropout(p=0.5)
-
-        self.fc1 = nn.Linear(29976,128)
-        self.fc2 = nn.Linear(128, 1)
-        self.glu = nn.GLU(dim=1)
-
-    def forward(self, input):
-        batch_size = input.size(0)
-        input = input.unsqueeze(1)
-
-        x = self.c1(input)
-        x = self.drop1(x)
-        x = self.pool(x)
-        x = self.c2(x)
-        x = self.drop2(x)
-        # print(x.shape)
-        # x = self.glu(x)
-
-        # Reshape to (batch_size x -1) for fc
-        x = x.view(batch_size, -1)
-        x = F.leaky_relu(self.fc1(x))
-        x = self.drop3(x)
-        x = self.fc2(x)
-        x = F.sigmoid(x)
-
-        return x
-
-class Discriminator(nn.Module):
-    def __init__(self, input_size, neurons=[1024,512,128]):
-        super(Discriminator, self).__init__()
-        layers = []
-        in_dim = input_size
-
-        for nodes in neurons:
-            layers.append(nn.Linear(in_dim, nodes))
-            layers.append(nn.LeakyReLU())
-            in_dim = nodes
-
-        self.sequential = nn.Sequential(*layers)
-        self.fc = nn.Linear(neurons[-1], 1)
-
-    def forward(self, x):
-        x = self.sequential(x)
-        x = self.fc(x)
-        x = F.sigmoid(x)
         return x
 
 class ACVAE(nn.Module):
