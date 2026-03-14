@@ -7,6 +7,13 @@ This repository is actively being refactored to make it as easy to use as possib
 ## Quick Start: The Full Pipeline
 If your data directories are already set up, you can run the entire data extraction, CNN baseline training, and ACVAE evaluation pipeline in just a few lines of code.
 
+__*The package is available as*__
+```bash
+pip install libs-transfer
+# or
+uv add libs-transfer
+```
+
 ```python
 from libs_transfer.training import train_concentration_predictors
 from libs_transfer.prepare_data import data_to_h5
