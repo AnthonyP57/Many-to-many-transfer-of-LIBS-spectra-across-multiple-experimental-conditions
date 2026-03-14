@@ -3,7 +3,7 @@ from libs_transfer.training.modules import ConvBatchNormGLU1D, DeConvBatchNormGL
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from libs_transfer.prepare_data.spectra_normalization import calc_padding, size_after_conv1d, size_after_avgpool1d, find_tensor_highest_peaks
+from libs_transfer.prepare_data.spectra_normalization import calc_padding, size_after_conv1d, find_tensor_highest_peaks
 
 class Encoder(nn.Module):
     def __init__(self, in_shape=30051, n_skips=3, total_emis_channels=1, ks_lst=[3,4,4,9], in_channels=1, n_classes_channels=1, out_channels_lst=[8,16,16,10], pd_lst=[True, True, True, True, True, True], dilation=1, stride_lst=[1,2,2,1], skip_pad=6, add_fc=False):
@@ -487,7 +487,7 @@ class Discriminator(nn.Module):
         return x
 
 class ACVAE(nn.Module):
-    def __init__(self, enc, dec, classifier, mean=None, std=None, class_embedding=False):
+    def __init__(self, enc, dec, classifier, mean=None, std=None, class_embedding=False, n_embeddings=3):
         super(ACVAE, self).__init__()
         self.enc = enc
         self.dec = dec
@@ -495,7 +495,7 @@ class ACVAE(nn.Module):
         self.mean = mean
         self.std_ = std
         if class_embedding:
-            self.class_emb = nn.Embedding(3,1)
+            self.class_emb = nn.Embedding(n_embeddings, 1)
 
     def forward(self, x_0, y_e, y_d, e_e, e_d, crop_by=False):
         """

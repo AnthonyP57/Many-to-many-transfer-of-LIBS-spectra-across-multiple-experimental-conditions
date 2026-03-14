@@ -1,6 +1,5 @@
 import os
 import json
-import warnings
 import itertools
 
 import h5py
@@ -17,15 +16,14 @@ from tqdm import tqdm
 from libs_transfer.training.models import Classifier, ACVAE, Encoder, Decoder
 from libs_transfer.training.modules import SpectraDataset, ClassDataset, train_test_spectra_samples, ACVAE_test_spectra, ModelConfig
 from libs_transfer.training.CNN_conc_baseline import CNN
-from libs_transfer.training.kmeans_loss_mean import calc_kmeans_loss_mean_spectra
-from libs_transfer.training.kmeans_loss import calc_kmeans_loss
-from libs_transfer.training.consine_loss_mean import cosine_similarity_mean_spectra
-from libs_transfer.training.consine_loss import cosine_similarity
 
-warnings.filterwarnings("ignore")
-torch.set_float32_matmul_precision('high')
-torch.backends.cudnn.benchmark = True
-torch.manual_seed(123456)
+from libs_transfer.training.evaluation_metrics import (
+    compute_mean_reference_spectra, build_reference_stack, 
+    get_raw_spectra_subsets, build_raw_reference_stack, 
+    PCAMeanSpectraEvaluator, PCASpectraEvaluator, 
+    KMeansMeanSpectraEvaluator, KMeansRawSpectraEvaluator
+)
+
 
 def prepare_training_data(path, wavelength_range=(250, 850), exclude_id=None):
     with h5py.File(path, 'r') as hf:
@@ -41,10 +39,13 @@ def prepare_training_data(path, wavelength_range=(250, 850), exclude_id=None):
         conditions = np.array([np.kron(row1, row2) for row1, row2 in zip(all_atm, all_ene)])
 
         if exclude_id is not None:
-            c = np.where(np.argmax(conditions, axis=1) != 0)[exclude_id]
+            c = np.where(np.argmax(conditions, axis=1) != exclude_id)[0]
+            
             all_spectra = all_spectra[c]
             labels = labels[c]
-            conditions = conditions[c][:, [i for i in range(conditions.shape[1]) if i != exclude_id]]
+            
+            cols_to_keep = [i for i in range(conditions.shape[1]) if i != exclude_id]
+            conditions = conditions[c][:, cols_to_keep]
 
     return all_spectra, conditions, labels, wavelen, spectra_0_idx, spectra_last_idx
 
@@ -131,7 +132,8 @@ def generate_transfer_pairs(num_conditions, scalers_dict, reg_conditions_dict, c
         result = ACVAE_test_spectra(
             reg_conditions_dict, conc_df, scalers_dict[source_idx], 
             labels[test_idx], all_spectra[test_idx], total_emis[test_idx], 
-            indices_dict[source_idx], indices_dict[target_idx], source_idx, target_idx
+            indices_dict[source_idx], indices_dict[target_idx], source_idx, target_idx,
+            num_conditions
         )
         
         transformed_data, source_conc, _ = result
@@ -140,8 +142,10 @@ def generate_transfer_pairs(num_conditions, scalers_dict, reg_conditions_dict, c
 
     return transform_target_dict, target_conc_dict
 
-def build_acvae_model(config, conditions_shape, mean, std_, device):
+def build_acvae_model(config, conditions_shape, mean, std_, device, n_conditions):
     classifier = Classifier(n_classes=conditions_shape[1]).to(device)
+    mean = mean.to(device)
+    std_ = std_.to(device)
     encoder = Encoder(n_classes_channels=1, in_channels=1, ks_lst=config.ks_list, out_channels_lst=config.channel_list, stride_lst=config.stride_list, skip_pad=config.skip_pad, add_fc=config.fc)
     decoder = Decoder(n_classes_channels=1, in_channels=config.channel_list[-1], ks_lst=config.ks_list[::-1], out_channels_lst=config.channel_list[:-1][1:]+[1], stride_lst=config.stride_list[::-1], skip_pad=config.skip_pad, add_fc=config.fc)
 
@@ -150,7 +154,7 @@ def build_acvae_model(config, conditions_shape, mean, std_, device):
     for p in decoder.parameters():
         if p.dim() > 1: nn.init.xavier_uniform_(p)
 
-    acvae = ACVAE(encoder, decoder, classifier, mean, std_, True).to(device)
+    acvae = ACVAE(encoder, decoder, classifier, mean, std_, True, n_conditions).to(device)
     acvae = torch.compile(acvae)
     
     optimizer = torch.optim.Adam(acvae.parameters(), lr=config.lr, weight_decay=config.wd)
@@ -180,13 +184,14 @@ def pretrain_classifier(classifier, class_dataset, device):
             epoch_loss += loss * x.shape[0]
         clas_sched.step()
         print(f'Classifier pretraining epoch: {i+1} loss: {epoch_loss/n_all:.4f}')
-        
+
 def train_epoch(acvae, ds, optimizer, device):
     acvae.train()
     metrics = {k: 0 for k in ['kl', 'gaus', 'clas', 'recon', 'convert', 'd']}
     n_all = 0
     
     for x_0, x_1, y_0, y_1, e_0, e_1 in ds:
+
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             x_0, x_1 = x_0.to(device), x_1.to(device)
             y_0, y_1 = y_0.to(device), y_1.to(device)
@@ -211,7 +216,7 @@ def train_epoch(acvae, ds, optimizer, device):
         
     return {k: v/n_all for k, v in metrics.items()}
 
-def evaluate_acvae(acvae, num_conditions, models_dict, scalers_dict, transform_target_dict, target_conc_dict, std, emis_std, labels, test_idx, device):
+def evaluate_acvae(acvae, num_conditions, models_dict, scalers_dict, transform_target_dict, target_conc_dict, std, emis_std, labels, test_idx, device, eval_km_mean, eval_km_raw, eval_cos_mean, eval_cos_raw):
     acvae.eval()
     all_preds_by_target = {i: [] for i in range(num_conditions)}
     all_transformed_by_target = {i: [] for i in range(num_conditions)}
@@ -276,15 +281,19 @@ def evaluate_acvae(acvae, num_conditions, models_dict, scalers_dict, transform_t
     if test_spectra_mean_list:
         test_spectra_mean = np.vstack(test_spectra_mean_list)
         test_spectra = np.concatenate(test_spectra_list, axis=0)
-        clus_acc, clus_loss = calc_kmeans_loss_mean_spectra(test_spectra_mean)
-        clus_acc_, clus_loss_ = calc_kmeans_loss(test_spectra)
-        cosine_sim = cosine_similarity_mean_spectra(test_spectra_mean)
-        cosine_sim_ = cosine_similarity(test_spectra)
+        
+        clus_acc, clus_loss = eval_km_mean.calc_kmeans_loss(test_spectra_mean)
+        cosine_sim = eval_cos_mean.cosine_similarity(test_spectra_mean)
+        
+        clus_acc_, clus_loss_ = eval_km_raw.calc_kmeans_loss(test_spectra)
+        cosine_sim_ = eval_cos_raw.cosine_similarity(test_spectra)
 
     return rmse, rmse_cnn, clus_acc, clus_acc_, cosine_sim, cosine_sim_
 
-def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_dir='./examples/processed_data/', epochs=5, batch_size=70):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_dir='./examples/processed_data/', epochs=5, batch_size=64, device=None):
+    if device is None:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    
     print(f"Using device: {device}")
 
     all_spectra, conditions, labels, wavelen, s0_idx, slast_idx = prepare_training_data(data_path)
@@ -303,8 +312,20 @@ def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_
         labels, all_spectra, total_emis, test_idx, indices_dict
     )
 
+    target_labels = np.unique(np.argmax(labels[test_idx], axis=1)) 
+    
+    mean_spectra_dict = compute_mean_reference_spectra(all_spectra, conditions, labels, target_labels)
+    stacked_mean_ref = build_reference_stack(mean_spectra_dict, num_conditions, target_labels)
+    raw_spectra_dict = get_raw_spectra_subsets(all_spectra, conditions, labels, target_labels)
+    stacked_raw_ref = build_raw_reference_stack(raw_spectra_dict, num_conditions, target_labels)
+
+    eval_cos_mean = PCAMeanSpectraEvaluator(stacked_mean_ref, n_components=15)
+    eval_cos_raw = PCASpectraEvaluator(stacked_raw_ref, n_components=15)
+    eval_km_mean = KMeansMeanSpectraEvaluator(stacked_mean_ref, n_components=15, k_clusters=6)
+    eval_km_raw = KMeansRawSpectraEvaluator(stacked_raw_ref, n_components=15, k_clusters=6)
+
     config = ModelConfig(checkpoint_path='./examples/model/checkpoints/', lr=5e-2, wd=1e-6, ks_list=[16]*7, stride_list=[1]*7, channel_list=[8]*7, skip_pad=6, resume=False, fc=False, pretrain=True)
-    acvae, classifier, optimizer, scheduler = build_acvae_model(config, conditions, mean, std_, device)
+    acvae, classifier, optimizer, scheduler = build_acvae_model(config, conditions, mean, std_, device, num_conditions)
     
     if not hasattr(config, 'loaded_checkpoint') and config.pretrain:
         class_dataset = DataLoader(ClassDataset(all_spectra[train_idx], conditions[train_idx]), batch_size=250, shuffle=True)
@@ -325,7 +346,8 @@ def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_
 
         rmse, rmse_cnn, c_acc, c_acc_, c_sim, c_sim_ = evaluate_acvae(
             acvae, num_conditions, models_dict, scalers_dict, transform_target_dict, 
-            target_conc_dict, std, emis_std, labels, test_idx, device
+            target_conc_dict, std, emis_std, labels, test_idx, device,
+            eval_km_mean, eval_km_raw, eval_cos_mean, eval_cos_raw
         )
         
         if rmse is not None:
@@ -333,5 +355,4 @@ def train_acvae_pipeline(data_path='./examples/processed_data/spectra.h5', data_
         iterator.write(f'Clustering Acc (Mean): {c_acc:.3f} | Cosine Sim (Mean): {c_sim:.3f}')
         iterator.write(f'Clustering Acc (All): {c_acc_:.3f} | Cosine Sim (All): {c_sim_:.3f}\n')
 
-    print("Training Complete!")
     return acvae

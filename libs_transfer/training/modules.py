@@ -4,7 +4,7 @@ import torch
 import math
 from torch.utils.data import Dataset
 import itertools
-from torch.utils.data import  DataLoader
+from torch.utils.data import DataLoader
 import numpy as np
 import random
 import os
@@ -73,6 +73,7 @@ class ModelConfig:
         self.resume = resume
         self.fc = fc
         self.pretrain = pretrain
+        os.makedirs(checkpoint_path, exist_ok=True)
         self.checkpoint_path = checkpoint_path
         self.epoch = 0
 
@@ -159,10 +160,12 @@ def train_test_spectra_idx(conditions, labels, test_split=0.1, seed=42):
             train_.extend(train_idx)
 
     return train_, test_
-def ACVAE_test_spectra(reg_conditions_dict, conc_df, std, all_labels, all_spectra, total_emis, condition_index_in, condition_index_out, in_idx, out_idx):
-    y_in = torch.zeros((len(condition_index_in), 3))
+
+def ACVAE_test_spectra(reg_conditions_dict, conc_df, std, all_labels, all_spectra, total_emis, condition_index_in, condition_index_out, in_idx, out_idx, num_conditions):
+
+    y_in = torch.zeros((len(condition_index_in), num_conditions))
     y_in[:, in_idx] = 1
-    y_out = torch.zeros((len(condition_index_in), 3))
+    y_out = torch.zeros((len(condition_index_in), num_conditions))
     y_out[:, out_idx] = 1
 
     condition_labels = all_labels[condition_index_in]
@@ -175,8 +178,8 @@ def ACVAE_test_spectra(reg_conditions_dict, conc_df, std, all_labels, all_spectr
     non_zero_idx_out = list(filter(lambda c: c < len(condition_index_out), non_zero_idx))
     non_zero_idx = non_zero_idx if len(non_zero_idx) < len(non_zero_idx_out) else non_zero_idx_out
 
-    in_to_out = FullDataset(all_spectra[condition_index_in][non_zero_idx], y_in[non_zero_idx], y_out[non_zero_idx]
-                                     , total_emis[condition_index_in][non_zero_idx], total_emis[condition_index_out][non_zero_idx])
+    in_to_out = FullDataset(all_spectra[condition_index_in][non_zero_idx], y_in[non_zero_idx], y_out[non_zero_idx],
+                            total_emis[condition_index_in][non_zero_idx], total_emis[condition_index_out][non_zero_idx])
     in_to_out = DataLoader(in_to_out, batch_size=100, shuffle=False)
 
     return in_to_out, cond_conc, condition_labels_[non_zero_idx]
@@ -190,9 +193,10 @@ def PDS_test_spectra(reg_conditions_dict, conc_df, std, all_labels, all_spectra,
     cond_conc = cond_conc[non_zero_idx]
     cond_conc = std.transform(cond_conc)
 
-    vacuum100_test = all_spectra[condition_index][non_zero_idx]
+    # --- DYNAMIC FIX: Generalize variable name ---
+    condition_test_spectra = all_spectra[condition_index][non_zero_idx]
 
-    return vacuum100_test, cond_conc
+    return condition_test_spectra, cond_conc
 
 class FullDataset(Dataset):
     def __init__(self, spectra, y_in, y_out, e_in, e_out):
@@ -232,14 +236,15 @@ class SpectraDataset(Dataset):
     def __init__(self, spectra, conditions, labels, total_emissivity, batch_size=64, min_spectra_in_sample=10):
         self.data_samples = None
 
-        all_conditions_idx = set(np.argmax(conditions, axis=1))
-        all_labels_idx = set(np.argmax(labels, axis=1))
+        all_conditions_idx = list(np.unique(np.argmax(conditions, axis=1)))
+        all_labels_idx = list(np.unique(np.argmax(labels, axis=1)))
         n_cond = conditions.shape[1]
         self.n_cond = n_cond
 
         data=[]
-        for i in range(n_cond):
+        for i in range(len(all_conditions_idx)):
             data.append([0]*(max(all_labels_idx)+1))
+        
         minimum_spectra_n = float('inf')
 
         total_emis=[]
@@ -399,7 +404,7 @@ class DeConvBatchNormGLU1D(nn.Module):
 def concat_dim1(x, y): # Copyright 2021 Hirokazu Kameoka
     y = y.argmax(dim=1)
     if not torch.all(y == y[0]):
-        ValueError('y must represent the same class')
+        raise ValueError('y must represent the same class')
     y = y[0].unsqueeze(0)
     y0 = torch.unsqueeze(torch.unsqueeze(y,0),2)
     N, n_ch, n_t = x.shape
